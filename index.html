@@ -56,11 +56,22 @@
       font-family: Consolas, monospace;
       font-size: 11px;
       padding: 8px;
-      white-space: pre-wrap;
-      word-break: break-all;
       z-index: 20;
     }
     #debugLog.show { display: block; }
+    #debugLogText { white-space: pre-wrap; word-break: break-all; margin: 0; }
+    #debugCopyBtn {
+      display: block;
+      margin: 0 0 6px auto;
+      background: #3949ab;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      padding: 5px 10px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    #debugCopyBtn.copied { background: #2e7d32; }
 
     /* ── 카메라 뷰 ── */
     #scanView {
@@ -330,7 +341,10 @@
     <div id="chips"></div>
     <div id="overlayCount"></div>
   </div>
-  <div id="debugLog"></div>
+  <div id="debugLog">
+    <button id="debugCopyBtn">로그 복사</button>
+    <pre id="debugLogText"></pre>
+  </div>
 </div>
 
 <!-- 결과 뷰 -->
@@ -392,20 +406,42 @@ const resultView = $('resultView');
 const startScreen= $('startScreen');
 const verifyBanner=$('verifyBanner');
 const debugLog   = $('debugLog');
+const debugLogText=$('debugLogText');
 const debugBtn   = $('debugBtn');
+const debugCopyBtn=$('debugCopyBtn');
 
 // ── 디버그 로그 ──
 let debugOn = false;
 function dlog(line) {
   if (!debugOn) return;
   const ts = new Date().toISOString().substring(11, 23);
-  debugLog.textContent += `[${ts}] ${line}\n`;
+  debugLogText.textContent += `[${ts}] ${line}\n`;
   debugLog.scrollTop = debugLog.scrollHeight;
 }
 debugBtn.addEventListener('click', () => {
   debugOn = !debugOn;
   debugBtn.classList.toggle('active', debugOn);
   debugLog.classList.toggle('show', debugOn);
+});
+debugCopyBtn.addEventListener('click', async (ev) => {
+  ev.stopPropagation();
+  const text = debugLogText.textContent || '(로그 없음)';
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (e) {
+    // 클립보드 API 미지원/거부 시 텍스트 선택으로 폴백
+    const range = document.createRange();
+    range.selectNodeContents(debugLogText);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+  debugCopyBtn.textContent = '복사됨!';
+  debugCopyBtn.classList.add('copied');
+  setTimeout(() => {
+    debugCopyBtn.textContent = '로그 복사';
+    debugCopyBtn.classList.remove('copied');
+  }, 1200);
 });
 const resultText = $('resultText');
 
