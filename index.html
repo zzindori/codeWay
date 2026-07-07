@@ -62,6 +62,8 @@
     #debugLogText { white-space: pre-wrap; word-break: break-all; margin: 0; }
     #debugCopyBtn {
       display: block;
+      position: sticky;
+      top: 0;
       margin: 0 0 6px auto;
       background: #3949ab;
       color: #fff;
@@ -70,6 +72,8 @@
       padding: 5px 10px;
       font-size: 11px;
       cursor: pointer;
+      z-index: 1;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.4);
     }
     #debugCopyBtn.copied { background: #2e7d32; }
 
