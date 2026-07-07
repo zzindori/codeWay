@@ -418,7 +418,8 @@ async function sha256hex(text) {
 // ── QR 파싱 ──
 const QR_RE = /^\[(\d{3})\/(\d{3}):([a-f0-9]{16})\]([\s\S]*)$/;
 function parseQr(raw) {
-  const m = QR_RE.exec(raw);
+  // 일부 QR 생성기가 비ASCII 데이터 인코딩 시 앞에 UTF-8 BOM(U+FEFF)을 붙이는 경우가 있어 제거
+  const m = QR_RE.exec(raw.replace(/^\uFEFF/, ''));
   if (!m) return null;
   return { index: parseInt(m[1]), total: parseInt(m[2]), hash: m[3], data: m[4] };
 }
