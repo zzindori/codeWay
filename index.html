@@ -568,8 +568,13 @@ async function tick() {
         if (result) onDetect(result.getText());
       }
     } catch (e) {
-      // 프레임에 코드가 없거나(NotFoundException) 일시 오류는 다음 프레임에서 재시도
-      if (Date.now() - lastEmptyLog > 1500) { dlog(`디코드 예외: ${e.name || e}`); lastEmptyLog = Date.now(); }
+      // 프레임에 코드가 없는 경우(NotFoundException)는 정상이므로 조용히 무시
+      const isNotFound = e && (e.kind === 'NotFoundException' || e.name === 'NotFoundException' || e instanceof ZXing.NotFoundException);
+      if (isNotFound) {
+        if (Date.now() - lastEmptyLog > 1500) { dlog('탐지된 코드 없음'); lastEmptyLog = Date.now(); }
+      } else {
+        dlog(`디코드 오류: ${(e && (e.message || e.kind || e.name)) || e}`);
+      }
     }
     detecting = false;
   }
