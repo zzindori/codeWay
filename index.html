@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>codeWay</title>
-  <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -527,7 +527,7 @@ async function onDetect(raw) {
   }
 }
 
-// ── 디코더 선택 (네이티브 BarcodeDetector 우선, 미지원 시 ZXing 폴백) ──
+// ── 디코더 선택 (네이티브 BarcodeDetector 우선, 미지원 시 jsQR 캔버스 캡처 폴백 — JoA 웹앱과 동일 방식, iOS Safari 호환) ──
 let barcodeDetector = null;
 let decoderName = 'none';
 if ('BarcodeDetector' in window) {
@@ -538,19 +538,26 @@ if ('BarcodeDetector' in window) {
     barcodeDetector = null;
   }
 }
-let zxingReader = null;
-if (!barcodeDetector) {
-  try {
-    zxingReader = new ZXing.BrowserQRCodeReader();
-    decoderName = 'ZXing (fallback)';
-  } catch (e) {
-    zxingReader = null;
-  }
-}
+if (!barcodeDetector) decoderName = 'jsQR (fallback)';
 console.log('[codeWay] decoder =', decoderName, ', BarcodeDetector in window =', 'BarcodeDetector' in window);
 debugBtn.addEventListener('click', () => {
   if (debugOn) dlog(`디코더: ${decoderName} / BarcodeDetector 지원: ${'BarcodeDetector' in window}`);
 }, { once: false });
+
+const scanCanvas = document.createElement('canvas');
+const scanCtx = scanCanvas.getContext('2d', { willReadFrequently: true });
+
+function decodeWithJsQR() {
+  const w = video.videoWidth;
+  const h = video.videoHeight;
+  if (!w || !h) return null;
+  scanCanvas.width = w;
+  scanCanvas.height = h;
+  scanCtx.drawImage(video, 0, 0, w, h);
+  const imageData = scanCtx.getImageData(0, 0, w, h);
+  const code = jsQR(imageData.data, w, h, { inversionAttempts: 'dontInvert' });
+  return code ? code.data : null;
+}
 
 // ── 스캔 루프 ──
 let detecting = false;
@@ -564,18 +571,13 @@ async function tick() {
         const codes = await barcodeDetector.detect(video);
         if (codes.length) onDetect(codes[0].rawValue);
         else if (Date.now() - lastEmptyLog > 1500) { dlog('탐지된 코드 없음'); lastEmptyLog = Date.now(); }
-      } else if (zxingReader) {
-        const result = zxingReader.decode(video);
-        if (result) onDetect(result.getText());
+      } else {
+        const text = decodeWithJsQR();
+        if (text) onDetect(text);
+        else if (Date.now() - lastEmptyLog > 1500) { dlog('탐지된 코드 없음'); lastEmptyLog = Date.now(); }
       }
     } catch (e) {
-      // 프레임에 코드가 없는 경우(NotFoundException)는 정상이므로 조용히 무시
-      const isNotFound = e && (e.kind === 'NotFoundException' || e.name === 'NotFoundException' || e instanceof ZXing.NotFoundException);
-      if (isNotFound) {
-        if (Date.now() - lastEmptyLog > 1500) { dlog('탐지된 코드 없음'); lastEmptyLog = Date.now(); }
-      } else {
-        dlog(`디코드 오류: ${(e && (e.message || e.kind || e.name)) || e}`);
-      }
+      dlog(`디코드 오류: ${(e && (e.message || e.name)) || e}`);
     }
     detecting = false;
   }
