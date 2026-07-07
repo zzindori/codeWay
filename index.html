@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>codeWay</title>
-  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -59,7 +59,6 @@
       display: block;
     }
 
-    #canvas { display: none; }
 
     /* 스캔 가이드 박스 */
     #guide {
@@ -297,7 +296,6 @@
 <!-- 스캔 뷰 -->
 <div id="scanView" style="display:none;">
   <video id="video" playsinline autoplay muted></video>
-  <canvas id="canvas"></canvas>
   <div id="guide"></div>
   <div id="badge"></div>
   <div id="overlay">
@@ -355,7 +353,6 @@ const state = {
 // ── DOM ──
 const $ = id => document.getElementById(id);
 const video      = $('video');
-const canvas     = $('canvas');
 const badge      = $('badge');
 const overlay    = $('overlay');
 const overlayHint= $('overlayHint');
@@ -480,19 +477,42 @@ async function onDetect(raw) {
   }
 }
 
+// ── 디코더 선택 (네이티브 BarcodeDetector 우선, 미지원 시 ZXing 폴백) ──
+let barcodeDetector = null;
+if ('BarcodeDetector' in window) {
+  try {
+    barcodeDetector = new BarcodeDetector({ formats: ['qr_code'] });
+  } catch (e) {
+    barcodeDetector = null;
+  }
+}
+let zxingReader = null;
+if (!barcodeDetector) {
+  try {
+    zxingReader = new ZXing.BrowserQRCodeReader();
+  } catch (e) {
+    zxingReader = null;
+  }
+}
+
 // ── 스캔 루프 ──
-function tick() {
+let detecting = false;
+async function tick() {
   if (!state.scanning || state.completed) return;
-  if (video.readyState === video.HAVE_ENOUGH_DATA) {
-    const w = video.videoWidth;
-    const h = video.videoHeight;
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(video, 0, 0, w, h);
-    const imageData = ctx.getImageData(0, 0, w, h);
-    const code = jsQR(imageData.data, w, h, { inversionAttempts: 'dontInvert' });
-    if (code) onDetect(code.data);
+  if (video.readyState === video.HAVE_ENOUGH_DATA && !detecting) {
+    detecting = true;
+    try {
+      if (barcodeDetector) {
+        const codes = await barcodeDetector.detect(video);
+        if (codes.length) onDetect(codes[0].rawValue);
+      } else if (zxingReader) {
+        const result = zxingReader.decode(video);
+        if (result) onDetect(result.getText());
+      }
+    } catch (e) {
+      // 프레임에 코드가 없거나(NotFoundException) 일시 오류는 다음 프레임에서 재시도
+    }
+    detecting = false;
   }
   state.animFrame = requestAnimationFrame(tick);
 }
