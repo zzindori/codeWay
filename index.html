@@ -202,6 +202,21 @@
       font-size: 12px;
       color: rgba(255,255,255,0.7);
     }
+    #photoScanBtn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      margin: 10px auto 0;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.4);
+      color: #fff;
+      border-radius: 20px;
+      padding: 8px 16px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    #photoScanBtn:hover { background: rgba(255,255,255,0.25); }
 
     /* ── 결과 뷰 ── */
     #resultView {
@@ -361,7 +376,15 @@
     <div id="progressBar" style="display:none;"><div id="progressFill"></div></div>
     <div id="chips"></div>
     <div id="overlayCount"></div>
+    <button id="photoScanBtn" title="사진으로 스캔">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>
+      </svg>
+      사진으로 스캔
+    </button>
   </div>
+  <input type="file" id="photoInput" accept="image/*" capture="environment" style="display:none">
+  <div id="html5qrFileReader" style="display:none;"></div>
   <div id="debugLog">
     <button id="debugCopyBtn">로그 복사</button>
     <pre id="debugLogText"></pre>
@@ -687,6 +710,49 @@ async function reset() {
   overlayHint.style.display = 'block';
   startScreen.style.display = 'flex';
 }
+
+// ── 사진으로 스캔 (네이티브 카메라 앱으로 촬영 → 정지 이미지 디코딩) ──
+// 실시간 비디오 프레임보다 해상도/초점이 훨씬 좋아서, 특히 iOS Safari에서
+// 라이브 스캔이 잘 안 되는 촘촘한 QR도 사진으로는 인식되는 경우가 많음.
+let photoScanner = null;
+function getPhotoScanner() {
+  if (!photoScanner) {
+    photoScanner = new Html5Qrcode('html5qrFileReader', {
+      formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+      verbose: false,
+    });
+  }
+  return photoScanner;
+}
+
+$('photoScanBtn').addEventListener('click', () => $('photoInput').click());
+
+$('photoInput').addEventListener('change', async (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+
+  showToast('사진 분석 중…');
+  try {
+    let text = null;
+    if (barcodeDetector) {
+      const bitmap = await createImageBitmap(file);
+      const codes = await barcodeDetector.detect(bitmap);
+      if (codes.length) text = codes[0].rawValue;
+    } else {
+      text = await getPhotoScanner().scanFile(file, false);
+    }
+    if (text) {
+      showToast('사진에서 QR 인식 성공 ✓');
+      onDetect(text);
+    } else {
+      showToast('사진에서 QR을 찾지 못했습니다', true);
+    }
+  } catch (err) {
+    dlog(`사진 스캔 오류: ${(err && (err.message || err)) || err}`);
+    showToast('사진에서 QR을 찾지 못했습니다', true);
+  }
+});
 
 // ── 클립보드 복사 ──
 $('copyBtn').addEventListener('click', async () => {
