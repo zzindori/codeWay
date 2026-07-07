@@ -601,8 +601,7 @@ async function startCamera() {
       video: {
         facingMode: 'environment',
         width: { ideal: 1920 },
-        height: { ideal: 1080 },
-        advanced: [{ focusMode: 'continuous' }]
+        height: { ideal: 1080 }
       }
     });
     video.srcObject = stream;
