@@ -384,7 +384,10 @@
     </button>
   </div>
   <input type="file" id="photoInput" accept="image/*" capture="environment" style="display:none">
-  <div id="html5qrFileReader" style="display:none;"></div>
+  <!-- display:none이면 clientWidth가 0이 되어 html5-qrcode가 사진을 300px 기본 크기로
+       축소해버리므로, 화면 밖으로 밀어내되 실제 사진 해상도보다 큰 크기를 유지해야
+       원본 그대로(다운스케일 없이) 디코딩됨 -->
+  <div id="html5qrFileReader" style="position:fixed; top:-99999px; left:-99999px; width:6000px; height:6000px;"></div>
   <div id="debugLog">
     <button id="debugCopyBtn">로그 복사</button>
     <pre id="debugLogText"></pre>
