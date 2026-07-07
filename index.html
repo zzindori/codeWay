@@ -458,17 +458,19 @@ const debugBtn   = $('debugBtn');
 const debugCopyBtn=$('debugCopyBtn');
 
 // ── 디버그 로그 ──
+// 패널을 나중에 켜도 그전 기록을 볼 수 있도록, 기록 자체는 항상 하고
+// debugOn은 패널을 "보여줄지"만 결정한다.
 let debugOn = false;
 function dlog(line) {
-  if (!debugOn) return;
   const ts = new Date().toISOString().substring(11, 23);
   debugLogText.textContent += `[${ts}] ${line}\n`;
-  debugLog.scrollTop = debugLog.scrollHeight;
+  if (debugOn) debugLog.scrollTop = debugLog.scrollHeight;
 }
 debugBtn.addEventListener('click', () => {
   debugOn = !debugOn;
   debugBtn.classList.toggle('active', debugOn);
   debugLog.classList.toggle('show', debugOn);
+  if (debugOn) debugLog.scrollTop = debugLog.scrollHeight;
 });
 debugCopyBtn.addEventListener('click', async (ev) => {
   ev.stopPropagation();
@@ -746,19 +748,28 @@ $('photoInput').addEventListener('change', async (e) => {
   if (!file) return;
 
   showToast('사진 분석 중…');
+  dlog(`사진 스캔 시작: ${file.name || '(이름없음)'} ${file.size}bytes ${file.type}`);
   try {
     let text = null;
     if (barcodeDetector) {
       const bitmap = await createImageBitmap(file);
+      dlog(`사진 원본 크기: ${bitmap.width}x${bitmap.height}`);
       const codes = await barcodeDetector.detect(bitmap);
       if (codes.length) text = codes[0].rawValue;
     } else {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
+      dlog(`사진 원본 크기: ${img.naturalWidth}x${img.naturalHeight}`);
+      URL.revokeObjectURL(url);
       text = await getPhotoScanner().scanFile(file, false);
     }
     if (text) {
+      dlog(`사진 스캔 성공: ${text.substring(0, 60)}`);
       showToast('사진에서 QR 인식 성공 ✓');
       onDetect(text);
     } else {
+      dlog('사진 스캔 실패: 텍스트 없음');
       showToast('사진에서 QR을 찾지 못했습니다', true);
     }
   } catch (err) {
