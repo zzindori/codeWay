@@ -29,7 +29,7 @@
       flex-shrink: 0;
     }
     #appbar h1 { font-size: 18px; font-weight: 600; }
-    #resetBtn {
+    #resetBtn, #debugBtn {
       background: none;
       border: none;
       color: #fff;
@@ -41,7 +41,26 @@
       justify-content: center;
       transition: background 0.15s;
     }
-    #resetBtn:hover { background: rgba(255,255,255,0.15); }
+    #resetBtn:hover, #debugBtn:hover { background: rgba(255,255,255,0.15); }
+    #debugBtn.active { background: rgba(255,255,255,0.25); }
+
+    /* ── 디버그 로그 ── */
+    #debugLog {
+      display: none;
+      position: absolute;
+      left: 0; right: 0; bottom: 0;
+      max-height: 40%;
+      overflow-y: auto;
+      background: rgba(0,0,0,0.85);
+      color: #0f0;
+      font-family: Consolas, monospace;
+      font-size: 11px;
+      padding: 8px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      z-index: 20;
+    }
+    #debugLog.show { display: block; }
 
     /* ── 카메라 뷰 ── */
     #scanView {
@@ -276,11 +295,18 @@
 
 <div id="appbar">
   <h1>codeWay</h1>
-  <button id="resetBtn" title="초기화">
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-      <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-    </svg>
-  </button>
+  <div style="display:flex;">
+    <button id="debugBtn" title="디버그 로그">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 9h.01M15 9h.01M8 13a4 4 0 0 0 8 0"/><circle cx="12" cy="12" r="10"/>
+      </svg>
+    </button>
+    <button id="resetBtn" title="초기화">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+      </svg>
+    </button>
+  </div>
 </div>
 
 <!-- 카메라 시작 전 -->
@@ -304,6 +330,7 @@
     <div id="chips"></div>
     <div id="overlayCount"></div>
   </div>
+  <div id="debugLog"></div>
 </div>
 
 <!-- 결과 뷰 -->
@@ -364,6 +391,22 @@ const scanView   = $('scanView');
 const resultView = $('resultView');
 const startScreen= $('startScreen');
 const verifyBanner=$('verifyBanner');
+const debugLog   = $('debugLog');
+const debugBtn   = $('debugBtn');
+
+// ── 디버그 로그 ──
+let debugOn = false;
+function dlog(line) {
+  if (!debugOn) return;
+  const ts = new Date().toISOString().substring(11, 23);
+  debugLog.textContent += `[${ts}] ${line}\n`;
+  debugLog.scrollTop = debugLog.scrollHeight;
+}
+debugBtn.addEventListener('click', () => {
+  debugOn = !debugOn;
+  debugBtn.classList.toggle('active', debugOn);
+  debugLog.classList.toggle('show', debugOn);
+});
 const resultText = $('resultText');
 
 // ── SHA256 (Web Crypto) ──
@@ -457,13 +500,19 @@ async function onDetect(raw) {
   state.lastScanned = raw;
   setTimeout(() => { state.lastScanned = null; }, 800);
 
+  dlog(`RAW(${raw.length}b): ${raw.substring(0, 80)}${raw.length > 80 ? '…' : ''}`);
+
   const parsed = parseQr(raw);
   if (!parsed) {
+    dlog('→ 헤더 정규식 불일치 (형식 오류)');
     showBadge('형식 오류', true);
     return;
   }
 
-  if (state.chunks[parsed.index] !== undefined) return;
+  if (state.chunks[parsed.index] !== undefined) {
+    dlog(`→ 중복 청크 무시 (${parsed.index}/${parsed.total})`);
+    return;
+  }
 
   state.totalChunks = parsed.total;
   state.expectedHash = parsed.hash;
@@ -479,9 +528,11 @@ async function onDetect(raw) {
 
 // ── 디코더 선택 (네이티브 BarcodeDetector 우선, 미지원 시 ZXing 폴백) ──
 let barcodeDetector = null;
+let decoderName = 'none';
 if ('BarcodeDetector' in window) {
   try {
     barcodeDetector = new BarcodeDetector({ formats: ['qr_code'] });
+    decoderName = 'BarcodeDetector';
   } catch (e) {
     barcodeDetector = null;
   }
@@ -490,13 +541,19 @@ let zxingReader = null;
 if (!barcodeDetector) {
   try {
     zxingReader = new ZXing.BrowserQRCodeReader();
+    decoderName = 'ZXing (fallback)';
   } catch (e) {
     zxingReader = null;
   }
 }
+console.log('[codeWay] decoder =', decoderName, ', BarcodeDetector in window =', 'BarcodeDetector' in window);
+debugBtn.addEventListener('click', () => {
+  if (debugOn) dlog(`디코더: ${decoderName} / BarcodeDetector 지원: ${'BarcodeDetector' in window}`);
+}, { once: false });
 
 // ── 스캔 루프 ──
 let detecting = false;
+let lastEmptyLog = 0;
 async function tick() {
   if (!state.scanning || state.completed) return;
   if (video.readyState === video.HAVE_ENOUGH_DATA && !detecting) {
@@ -505,12 +562,14 @@ async function tick() {
       if (barcodeDetector) {
         const codes = await barcodeDetector.detect(video);
         if (codes.length) onDetect(codes[0].rawValue);
+        else if (Date.now() - lastEmptyLog > 1500) { dlog('탐지된 코드 없음'); lastEmptyLog = Date.now(); }
       } else if (zxingReader) {
         const result = zxingReader.decode(video);
         if (result) onDetect(result.getText());
       }
     } catch (e) {
       // 프레임에 코드가 없거나(NotFoundException) 일시 오류는 다음 프레임에서 재시도
+      if (Date.now() - lastEmptyLog > 1500) { dlog(`디코드 예외: ${e.name || e}`); lastEmptyLog = Date.now(); }
     }
     detecting = false;
   }
