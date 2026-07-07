@@ -560,26 +560,35 @@ function decodeWithJsQR() {
 }
 
 // ── 스캔 루프 ──
+// jsQR 경로는 풀해상도 캔버스 캡처+디코딩 비용이 커서 매 프레임 돌리면 iOS에서 오히려
+// 부하로 인식률이 떨어짐 → JoA와 동일하게 약 250ms 간격으로 스로틀링
+const JSQR_INTERVAL_MS = 250;
 let detecting = false;
 let lastEmptyLog = 0;
+let lastJsQrAttempt = 0;
 async function tick() {
   if (!state.scanning || state.completed) return;
   if (video.readyState === video.HAVE_ENOUGH_DATA && !detecting) {
-    detecting = true;
-    try {
-      if (barcodeDetector) {
-        const codes = await barcodeDetector.detect(video);
-        if (codes.length) onDetect(codes[0].rawValue);
-        else if (Date.now() - lastEmptyLog > 1500) { dlog('탐지된 코드 없음'); lastEmptyLog = Date.now(); }
-      } else {
-        const text = decodeWithJsQR();
-        if (text) onDetect(text);
-        else if (Date.now() - lastEmptyLog > 1500) { dlog('탐지된 코드 없음'); lastEmptyLog = Date.now(); }
+    const now = Date.now();
+    const shouldRunJsQr = barcodeDetector || (now - lastJsQrAttempt >= JSQR_INTERVAL_MS);
+    if (shouldRunJsQr) {
+      detecting = true;
+      try {
+        if (barcodeDetector) {
+          const codes = await barcodeDetector.detect(video);
+          if (codes.length) onDetect(codes[0].rawValue);
+          else if (now - lastEmptyLog > 1500) { dlog('탐지된 코드 없음'); lastEmptyLog = now; }
+        } else {
+          lastJsQrAttempt = now;
+          const text = decodeWithJsQR();
+          if (text) onDetect(text);
+          else if (now - lastEmptyLog > 1500) { dlog('탐지된 코드 없음'); lastEmptyLog = now; }
+        }
+      } catch (e) {
+        dlog(`디코드 오류: ${(e && (e.message || e.name)) || e}`);
       }
-    } catch (e) {
-      dlog(`디코드 오류: ${(e && (e.message || e.name)) || e}`);
+      detecting = false;
     }
-    detecting = false;
   }
   state.animFrame = requestAnimationFrame(tick);
 }
