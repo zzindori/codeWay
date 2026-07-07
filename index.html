@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>codeWay</title>
-  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -92,6 +92,22 @@
       object-fit: cover;
       display: block;
     }
+
+    /* html5-qrcode 폴백 (iOS 등 BarcodeDetector 미지원 브라우저) */
+    #html5qrReader {
+      display: none;
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+    }
+    #html5qrReader video, #html5qrReader canvas {
+      width: 100% !important;
+      height: 100% !important;
+      object-fit: cover !important;
+    }
+    #html5qrReader img { display: none !important; }
 
 
     /* 스캔 가이드 박스 */
@@ -337,6 +353,7 @@
 <!-- 스캔 뷰 -->
 <div id="scanView" style="display:none;">
   <video id="video" playsinline autoplay muted></video>
+  <div id="html5qrReader"></div>
   <div id="guide"></div>
   <div id="badge"></div>
   <div id="overlay">
@@ -515,13 +532,7 @@ async function assemble(total) {
   const ok = actualHash === state.expectedHash;
 
   state.completed = true;
-  cancelAnimationFrame(state.animFrame);
-
-  // 카메라 스트림 정지
-  if (video.srcObject) {
-    video.srcObject.getTracks().forEach(t => t.stop());
-    video.srcObject = null;
-  }
+  await stopCamera();
 
   scanView.style.display = 'none';
   resultView.classList.add('active');
@@ -567,7 +578,9 @@ async function onDetect(raw) {
   }
 }
 
-// ── 디코더 선택 (네이티브 BarcodeDetector 우선, 미지원 시 jsQR 캔버스 캡처 폴백 — JoA 웹앱과 동일 방식, iOS Safari 호환) ──
+// ── 디코더 선택 (네이티브 BarcodeDetector 우선, 미지원 시 html5-qrcode 폴백) ──
+// html5-qrcode는 ZXing 기반으로 jsQR보다 고밀도 QR 디코딩 능력이 훨씬 강하고,
+// 자체적으로 iOS Safari 프레임 캡처를 처리해주는 검증된 라이브러리.
 let barcodeDetector = null;
 let decoderName = 'none';
 if ('BarcodeDetector' in window) {
@@ -578,57 +591,29 @@ if ('BarcodeDetector' in window) {
     barcodeDetector = null;
   }
 }
-if (!barcodeDetector) decoderName = 'jsQR (fallback)';
+if (!barcodeDetector) decoderName = 'html5-qrcode (fallback)';
 console.log('[codeWay] decoder =', decoderName, ', BarcodeDetector in window =', 'BarcodeDetector' in window);
 debugBtn.addEventListener('click', () => {
   if (debugOn) dlog(`디코더: ${decoderName} / BarcodeDetector 지원: ${'BarcodeDetector' in window}`);
 }, { once: false });
 
-const scanCanvas = document.createElement('canvas');
-const scanCtx = scanCanvas.getContext('2d', { willReadFrequently: true });
-
-function decodeWithJsQR() {
-  const w = video.videoWidth;
-  const h = video.videoHeight;
-  if (!w || !h) return null;
-  scanCanvas.width = w;
-  scanCanvas.height = h;
-  scanCtx.drawImage(video, 0, 0, w, h);
-  const imageData = scanCtx.getImageData(0, 0, w, h);
-  const code = jsQR(imageData.data, w, h, { inversionAttempts: 'dontInvert' });
-  return code ? code.data : null;
-}
-
-// ── 스캔 루프 ──
-// jsQR 경로는 풀해상도 캔버스 캡처+디코딩 비용이 커서 매 프레임 돌리면 iOS에서 오히려
-// 부하로 인식률이 떨어짐 → JoA와 동일하게 약 250ms 간격으로 스로틀링
-const JSQR_INTERVAL_MS = 250;
-let detecting = false;
+let html5QrInstance = null;
 let lastEmptyLog = 0;
-let lastJsQrAttempt = 0;
+
+// ── 스캔 루프 (BarcodeDetector 전용 — html5-qrcode는 자체 루프로 콜백을 호출함) ──
+let detecting = false;
 async function tick() {
-  if (!state.scanning || state.completed) return;
+  if (!state.scanning || state.completed || !barcodeDetector) return;
   if (video.readyState === video.HAVE_ENOUGH_DATA && !detecting) {
-    const now = Date.now();
-    const shouldRunJsQr = barcodeDetector || (now - lastJsQrAttempt >= JSQR_INTERVAL_MS);
-    if (shouldRunJsQr) {
-      detecting = true;
-      try {
-        if (barcodeDetector) {
-          const codes = await barcodeDetector.detect(video);
-          if (codes.length) onDetect(codes[0].rawValue);
-          else if (now - lastEmptyLog > 1500) { dlog('탐지된 코드 없음'); lastEmptyLog = now; }
-        } else {
-          lastJsQrAttempt = now;
-          const text = decodeWithJsQR();
-          if (text) onDetect(text);
-          else if (now - lastEmptyLog > 1500) { dlog('탐지된 코드 없음'); lastEmptyLog = now; }
-        }
-      } catch (e) {
-        dlog(`디코드 오류: ${(e && (e.message || e.name)) || e}`);
-      }
-      detecting = false;
+    detecting = true;
+    try {
+      const codes = await barcodeDetector.detect(video);
+      if (codes.length) onDetect(codes[0].rawValue);
+      else if (Date.now() - lastEmptyLog > 1500) { dlog('탐지된 코드 없음'); lastEmptyLog = Date.now(); }
+    } catch (e) {
+      dlog(`디코드 오류: ${(e && (e.message || e.name)) || e}`);
     }
+    detecting = false;
   }
   state.animFrame = requestAnimationFrame(tick);
 }
@@ -636,32 +621,60 @@ async function tick() {
 // ── 카메라 시작 ──
 async function startCamera() {
   try {
-    // 청크당 데이터가 커서(최대 2900바이트) QR 모듈이 촘촘함 → 해상도를 높여 모듈당 픽셀 수를 확보
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: 'environment',
-        width: { ideal: 1920 },
-        height: { ideal: 1080 }
-      }
-    });
-    video.srcObject = stream;
-    await video.play();
+    if (barcodeDetector) {
+      // 청크당 데이터가 커서(최대 2900바이트) QR 모듈이 촘촘함 → 해상도를 높여 모듈당 픽셀 수를 확보
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }
+      });
+      video.srcObject = stream;
+      await video.play();
+      video.style.display = 'block';
+    } else {
+      video.style.display = 'none';
+      $('html5qrReader').style.display = 'block';
+      html5QrInstance = new Html5Qrcode('html5qrReader', {
+        formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+        verbose: false,
+      });
+      await html5QrInstance.start(
+        { facingMode: 'environment' },
+        {
+          fps: 10,
+          disableFlip: true,
+          videoConstraints: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+        },
+        (decodedText) => onDetect(decodedText),
+        () => {
+          if (Date.now() - lastEmptyLog > 1500) { dlog('탐지된 코드 없음'); lastEmptyLog = Date.now(); }
+        }
+      );
+    }
     state.scanning = true;
     startScreen.style.display = 'none';
     scanView.style.display = 'flex';
-    tick();
+    if (barcodeDetector) tick();
   } catch (e) {
     showToast('카메라 접근 실패: ' + e.message, true);
   }
 }
 
-// ── 초기화 ──
-function reset() {
+// ── 카메라 정지 (디코더 종류 무관하게 안전하게 정리) ──
+async function stopCamera() {
   cancelAnimationFrame(state.animFrame);
+  if (html5QrInstance) {
+    try { await html5QrInstance.stop(); } catch (e) { /* 이미 정지된 경우 무시 */ }
+    try { html5QrInstance.clear(); } catch (e) {}
+    html5QrInstance = null;
+  }
   if (video.srcObject) {
     video.srcObject.getTracks().forEach(t => t.stop());
     video.srcObject = null;
   }
+}
+
+// ── 초기화 ──
+async function reset() {
+  await stopCamera();
   Object.assign(state, { chunks: {}, totalChunks: 0, expectedHash: null,
     lastScanned: null, completed: false, scanning: false, animFrame: null });
 
